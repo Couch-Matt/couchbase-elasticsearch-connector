@@ -27,9 +27,11 @@ import com.google.common.io.Closer;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
@@ -105,14 +107,18 @@ class TestConnectorGroup implements Closeable {
     try {
       String consulAddress = consulCluster.getHostAndPort(consulAgentIndex).toString();
 
-      String command = startScript + " run" +
-          " --consul-agent=" + consulAddress +
-          " --group=" + groupName;
+      List<String> command = new ArrayList<>(List.of(
+          startScript, "run",
+          "--consul-agent=" + consulAddress,
+          "--group=" + groupName));
       if (serviceId != null) {
-        command += " --service-id=" + serviceId;
+        command.add("--service-id=" + serviceId);
       }
 
-      Process p = new ProcessBuilder("sh", "-c", command)
+      // Run the start script directly rather than via "sh -c". The script exec's the JVM, so the
+      // Process handle *is* the connector. With "sh -c", a shell that forks instead of exec'ing
+      // (e.g. dash, /bin/sh on Ubuntu) leaves destroy() killing only the shell, orphaning the JVM.
+      Process p = new ProcessBuilder(command)
           .inheritIO()
           .start();
       long pid = p.pid();
@@ -124,16 +130,29 @@ class TestConnectorGroup implements Closeable {
         }
       });
 
-      System.out.println("Started connector process " + pid + " with command: " + command);
+      System.out.println("Started connector process " + pid + " with command: " + String.join(" ", command));
 
       Closeable c = () -> {
         closeRequested.set(true);
         System.out.println("Destroying connector process " + pid + " (Consul agent " + consulAddress + ")");
+
+        // Safety net: if anything in between forked a child, signal it too. Capture descendants
+        // before destroying the parent, since orphans are re-parented and no longer reachable.
+        List<ProcessHandle> descendants = p.descendants().collect(Collectors.toList());
+        descendants.forEach(ProcessHandle::destroy);
         p.destroy();
         try {
           if (!p.waitFor(10, SECONDS)) {
             System.err.println("Connector process " + pid + " failed to exit promptly.");
             System.exit(1);
+          }
+          for (ProcessHandle d : descendants) {
+            try {
+              d.onExit().get(10, SECONDS);
+            } catch (ExecutionException | TimeoutException e) {
+              System.err.println("Connector child process " + d.pid() + " failed to exit promptly.");
+              System.exit(1);
+            }
           }
           System.out.println("Connector processes " + pid + " exited with status code: " + p.exitValue());
         } catch (InterruptedException e) {
