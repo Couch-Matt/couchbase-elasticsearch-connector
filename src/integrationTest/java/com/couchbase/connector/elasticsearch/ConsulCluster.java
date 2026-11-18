@@ -32,7 +32,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
-import static com.couchbase.connector.elasticsearch.DockerHelper.getDockerHost;
 import static com.couchbase.connector.elasticsearch.IntegrationTestHelper.retryUntilSuccess;
 import static com.couchbase.connector.elasticsearch.io.BackoffPolicyBuilder.constantBackoff;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -81,19 +80,29 @@ public class ConsulCluster implements Closeable {
   }
 
   public ConsulCluster start() {
-    nodes.forEach(GenericContainer::start);
-    System.out.println("Consul cluster UI at http://" + getAddress(0));
+    try {
+      nodes.forEach(GenericContainer::start);
+      System.out.println("Consul cluster UI at http://" + getAddress(0));
 
-    System.out.println("Waiting for Consul cluster to elect a leader...");
+      System.out.println("Waiting for Consul cluster to elect a leader...");
 
-    final BackoffPolicy backoffPolicy = constantBackoff(Duration.ofSeconds(1)).limit(10).build();
-    retryUntilSuccess(backoffPolicy, () -> {
-          try (ConsulOps client = client(nodes.size() - 1)) {
-            checkState(client.kv().upsertKey("startup-complete", "true").block().body());
-            return null;
+      final BackoffPolicy backoffPolicy = constantBackoff(Duration.ofSeconds(1)).limit(10).build();
+      retryUntilSuccess(backoffPolicy, () -> {
+            try (ConsulOps client = client(nodes.size() - 1)) {
+              checkState(client.kv().upsertKey("startup-complete", "true").block().body());
+              return null;
+            }
           }
-        }
-    );
+      );
+    } catch (RuntimeException e) {
+      // Don't leak containers if startup fails; callers never get a reference to stop them.
+      try {
+        stop();
+      } catch (RuntimeException suppressed) {
+        e.addSuppressed(suppressed);
+      }
+      throw e;
+    }
 
     System.out.println("Consul cluster is ready.");
 
@@ -108,16 +117,17 @@ public class ConsulCluster implements Closeable {
   }
 
   public String getAddress(int nodeIndex) {
-    return getDockerHost() + ":" + nodes.get(nodeIndex).getMappedPort(HTTP_PORT);
+    return getHostAndPort(nodeIndex).toString();
   }
 
   public HostAndPort getHostAndPort(int nodeIndex) {
+    // Let Testcontainers resolve the host; DOCKER_HOST may be a unix:// socket with no hostname.
     GenericContainer<?> node = nodes.get(nodeIndex);
-    return HostAndPort.fromParts(node.getHost(), node.getMappedPort(8500));
+    return HostAndPort.fromParts(node.getHost(), node.getMappedPort(HTTP_PORT));
   }
 
   private ConsulOps client(int nodeIndex) {
-    return new ConsulOps(HostAndPort.fromString(getAddress(nodeIndex)), ConsulOps.DEFAULT_CONFIG);
+    return new ConsulOps(getHostAndPort(nodeIndex), ConsulOps.DEFAULT_CONFIG);
   }
 
   @Override
