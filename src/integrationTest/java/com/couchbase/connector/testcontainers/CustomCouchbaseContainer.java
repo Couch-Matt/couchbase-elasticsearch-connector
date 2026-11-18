@@ -41,6 +41,7 @@ public class CustomCouchbaseContainer extends CouchbaseContainer {
     CouchbaseContainer couchbase = new CustomCouchbaseContainer(dockerImageName)
         .withEnabledServices(CouchbaseService.KV, CouchbaseService.QUERY, CouchbaseService.INDEX)
         .withStartupTimeout(Duration.ofMinutes(5)) // CI Docker host is sloooooowwwwwwww
+        .withStartupAttempts(3)
         .withCreateContainerCmdModifier(cmd -> cmd.getHostConfig()
             .withUlimits(new Ulimit[]{new Ulimit("nofile", MIN_OPEN_FILES, MIN_OPEN_FILES)}));
 
