@@ -32,8 +32,14 @@ public class DockerHelper {
       return "localhost";
     }
 
+    if (!env.contains("://")) {
+      return env;
+    }
+
     try {
-      return env.contains("://") ? new URI(env).getHost() : env;
+      // A unix:// or npipe:// socket has no host component; the containers are on this machine.
+      final String host = new URI(env).getHost();
+      return Strings.isNullOrEmpty(host) ? "localhost" : host;
     } catch (URISyntaxException e) {
       throw new RuntimeException(e);
     }
