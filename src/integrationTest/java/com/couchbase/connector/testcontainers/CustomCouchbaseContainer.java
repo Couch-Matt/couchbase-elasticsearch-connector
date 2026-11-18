@@ -17,6 +17,7 @@
 package com.couchbase.connector.testcontainers;
 
 import com.couchbase.client.dcp.util.Version;
+import com.github.dockerjava.api.model.Ulimit;
 import org.testcontainers.couchbase.CouchbaseContainer;
 import org.testcontainers.couchbase.CouchbaseService;
 import org.testcontainers.utility.DockerImageName;
@@ -26,6 +27,8 @@ import java.util.Optional;
 import java.util.Set;
 
 public class CustomCouchbaseContainer extends CouchbaseContainer {
+  private static final long MIN_OPEN_FILES = 200_000L;
+
   private final CouchbaseOps ops;
 
   public CustomCouchbaseContainer(String containerName) {
@@ -37,7 +40,9 @@ public class CustomCouchbaseContainer extends CouchbaseContainer {
     @SuppressWarnings("resource")
     CouchbaseContainer couchbase = new CustomCouchbaseContainer(dockerImageName)
         .withEnabledServices(CouchbaseService.KV, CouchbaseService.QUERY, CouchbaseService.INDEX)
-        .withStartupTimeout(Duration.ofMinutes(5)); // CI Docker host is sloooooowwwwwwww
+        .withStartupTimeout(Duration.ofMinutes(5)) // CI Docker host is sloooooowwwwwwww
+        .withCreateContainerCmdModifier(cmd -> cmd.getHostConfig()
+            .withUlimits(new Ulimit[]{new Ulimit("nofile", MIN_OPEN_FILES, MIN_OPEN_FILES)}));
 
     couchbase.start();
 
