@@ -76,9 +76,12 @@ public class ConsulDocumentWatcherTest {
 
   @AfterClass
   public static void stopConsul() throws IOException {
-    client.close();
+    // Guard against nulls so a startup failure isn't masked by an NPE here.
+    if (client != null) {
+      client.close();
+    }
 
-    if (!NATIVE_CONSUL) {
+    if (!NATIVE_CONSUL && consulCluster != null) {
       consulCluster.stop();
     }
   }
